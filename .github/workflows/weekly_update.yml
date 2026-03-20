@@ -1,0 +1,41 @@
+name: NP AI Weekly Update
+
+on:
+  schedule:
+    # 매주 월요일 오전 8시 KST = 일요일 23:00 UTC
+    - cron: '0 23 * * 0'
+  workflow_dispatch: # 수동 실행도 가능
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install yt-dlp
+        run: pip install yt-dlp
+
+      - name: Run weekly update
+        env:
+          NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
+          NOTION_MAIN_PAGE_ID: ${{ secrets.NOTION_MAIN_PAGE_ID }}
+          NOTION_ARCHIVE_PAGE_ID: ${{ secrets.NOTION_ARCHIVE_PAGE_ID }}
+          NOTION_YOUTUBE_PAGE_ID: ${{ secrets.NOTION_YOUTUBE_PAGE_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+        run: python weekly_update.py

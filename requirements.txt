@@ -1,0 +1,7 @@
+feedparser
+requests
+python-dotenv
+google-generativeai
+openai
+anthropic
+yt-dlp
