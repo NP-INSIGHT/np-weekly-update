@@ -175,6 +175,9 @@ def fetch_news() -> list[dict]:
                     summary = re.sub(r"<[^>]+>", "", summary)[:500]
                 if _should_exclude_article(title, summary):
                     continue
+                # 한국어 기사만 필터링 (제목에 한글 포함 여부)
+                if not re.search(r"[가-힣]", title):
+                    continue
                 all_articles.append({
                     "title": title,
                     "link": link,
@@ -244,8 +247,12 @@ def fetch_youtube_videos() -> list[dict]:
                 view_count = int(stats.get("viewCount") or 0)
                 if view_count < YOUTUBE_MIN_VIEWS:
                     continue
-                seen_ids.add(vid)
                 snippet = v.get("snippet", {})
+                # 한국어 영상만 필터링 (제목에 한글 포함 여부)
+                title_text = snippet.get("title") or ""
+                if not re.search(r"[가-힣]", title_text):
+                    continue
+                seen_ids.add(vid)
                 dur = v.get("contentDetails", {}).get("duration", "PT0M")
                 minutes = _parse_iso_duration(dur)
                 pub_date = (snippet.get("publishedAt") or "")[:10]  # YYYY-MM-DD
