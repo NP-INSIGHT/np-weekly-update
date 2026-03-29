@@ -1711,18 +1711,8 @@ def main():
     else:
         print("  📂 [Notion] NOTION_ARCHIVE_PAGE_ID 없음 → 스킵")
 
-    # 6. YouTube 추천 영상 페이지 업데이트 (매주)
-    if youtube_videos:
-        print(f"\n🎬 6. YouTube 추천 영상 페이지 업데이트 (NP AI 자동화 추천 영상)")
-        if NOTION_API_KEY:
-            notion_append_youtube_monthly(youtube_videos, briefing["week_label"])
-        else:
-            print("  ⚠️ [Notion] NOTION_API_KEY 없음 → 스킵")
-    else:
-        print("\n🎬 6. YouTube — 수집된 영상 없어 스킵")
-
-    # 7. Notion 메인 페이지 업데이트 (매주)
-    print("\n📝 7. Notion 메인 페이지 업데이트")
+    # 6. Notion 메인 페이지 업데이트 (매주)
+    print("\n📝 6. Notion 메인 페이지 업데이트")
     if NOTION_API_KEY and NOTION_MAIN_PAGE_ID:
         notion_replace_this_week_section(briefing)
     else:
