@@ -69,6 +69,11 @@ RSS_SOURCES = [
     ("AI타임스", "https://www.aitimes.com/rss/allArticle.xml"),
     ("전자신문", "https://rss.etnews.com/Section904.xml"),
     ("ZDNet Korea", "https://zdnet.co.kr/rss/AI_news.xml"),
+    ("디지털투데이", "https://www.digitaltoday.co.kr/rss/allArticle.xml"),
+    ("IT조선", "https://it.chosun.com/rss/it_news.xml"),
+    ("한국경제 IT", "https://www.hankyung.com/feed/it"),
+    ("블로터", "https://www.bloter.net/feed"),
+    ("테크크런치코리아", "https://kr.techcrunch.com/feed/"),
 ]
 
 YOUTUBE_QUERIES = [
