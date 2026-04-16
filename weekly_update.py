@@ -155,45 +155,54 @@ def parse_rss_date(entry) -> Optional[datetime]:
     return None
 
 
-def fetch_news() -> list[dict]:
-    """RSS에서 최근 7일 기사 수집. 투자/경영 뉴스 필터링 제거."""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=DAYS_BACK)).replace(tzinfo=None)
-    all_articles = []
+def _fetch_single_rss(name: str, url: str, cutoff: datetime) -> list[dict]:
+    """단일 RSS 소스에서 기사 수집 (병렬 처리용)."""
+    articles = []
+    try:
+        feed = feedparser.parse(url, request_headers={"User-Agent": "NP-AI-Hub/1.0"})
+        count = 0
+        for entry in feed.entries:
+            if count >= MAX_ARTICLES_PER_SOURCE:
+                break
+            pub = parse_rss_date(entry)
+            if pub and pub.replace(tzinfo=None) < cutoff:
+                continue
+            link = entry.get("link") or ""
+            title = (entry.get("title") or "").strip()
+            if not title or not link:
+                continue
+            summary = entry.get("summary") or entry.get("description") or ""
+            if hasattr(summary, "replace"):
+                summary = re.sub(r"<[^>]+>", "", summary)[:500]
+            if _should_exclude_article(title, summary):
+                continue
+            if not re.search(r"[가-힣]", title):
+                continue
+            articles.append({
+                "title": title,
+                "link": link,
+                "summary": summary,
+                "source": name,
+                "published": pub.isoformat() if pub else "",
+            })
+            count += 1
+        print(f"  📡 [RSS] {name} → {count}건")
+    except Exception as e:
+        print(f"  ⚠️ [RSS] {name} 오류: {e}")
+    return articles
 
-    for name, url in RSS_SOURCES:
-        try:
-            print(f"  📡 [RSS] {name} ...")
-            feed = feedparser.parse(url, request_headers={"User-Agent": "NP-AI-Hub/1.0"})
-            count = 0
-            for entry in feed.entries:
-                if count >= MAX_ARTICLES_PER_SOURCE:
-                    break
-                pub = parse_rss_date(entry)
-                if pub and pub.replace(tzinfo=None) < cutoff:
-                    continue
-                link = entry.get("link") or ""
-                title = (entry.get("title") or "").strip()
-                if not title or not link:
-                    continue
-                summary = entry.get("summary") or entry.get("description") or ""
-                if hasattr(summary, "replace"):
-                    summary = re.sub(r"<[^>]+>", "", summary)[:500]
-                if _should_exclude_article(title, summary):
-                    continue
-                # 한국어 기사만 필터링 (제목에 한글 포함 여부)
-                if not re.search(r"[가-힣]", title):
-                    continue
-                all_articles.append({
-                    "title": title,
-                    "link": link,
-                    "summary": summary,
-                    "source": name,
-                    "published": pub.isoformat() if pub else "",
-                })
-                count += 1
-            print(f"      → {count}건")
-        except Exception as e:
-            print(f"      ⚠️ [오류] {e}")
+
+def fetch_news() -> list[dict]:
+    """RSS에서 최근 7일 기사 수집. 모든 소스 병렬 처리."""
+    from concurrent.futures import ThreadPoolExecutor
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=DAYS_BACK)).replace(tzinfo=None)
+
+    with ThreadPoolExecutor(max_workers=len(RSS_SOURCES)) as pool:
+        futures = [pool.submit(_fetch_single_rss, name, url, cutoff) for name, url in RSS_SOURCES]
+        all_articles = []
+        for f in futures:
+            all_articles.extend(f.result())
+
     print(f"  📡 총 수집(필터 후): {len(all_articles)}건")
     return all_articles
 
@@ -363,60 +372,68 @@ def _fetch_youtube_via_ytdlp() -> list[dict]:
     return result
 
 
+def _summarize_youtube_batch(batch: list[dict], batch_idx: int) -> tuple[int, list[dict]]:
+    """단일 YouTube 배치 요약 (병렬 처리용)."""
+    n = len(batch)
+    input_lines = []
+    for i, v in enumerate(batch):
+        input_lines.append(f"[{i+1}] 제목: {v.get('title','')}\n    설명: {v.get('summary_line','')}")
+    input_text = "\n\n".join(input_lines)
+
+    prompt = (
+        "너는 한국어 AI 뉴스 에디터다. 과장 없이 핵심만 전달한다.\n"
+        "아래 YouTube 영상들의 제목과 설명을 보고, 각 영상이 어떤 내용인지 한국어 2줄로 요약해줘.\n"
+        "반드시 JSON 배열만 출력하고, 다른 텍스트는 절대 포함하지 않는다.\n"
+        f"출력 형식: [{{'summary':'2줄 한국어 요약'}}] (총 {n}개, 입력 순서 동일)\n\n"
+        f"{input_text}"
+    )
+
+    for attempt in range(1, 4):
+        try:
+            r = requests.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}",
+                headers={"Content-Type": "application/json"},
+                json={
+                    "contents": [{"parts": [{"text": prompt}]}],
+                    "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2000},
+                },
+                timeout=60,
+            )
+            r.raise_for_status()
+            data = r.json()
+            parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+            raw = "\n".join(p.get("text", "") for p in parts).strip()
+            cleaned = _extract_json_text(raw)
+            parsed = json.loads(cleaned)
+            if isinstance(parsed, list) and len(parsed) == n:
+                for i, v in enumerate(batch):
+                    v["summary_line"] = parsed[i].get("summary", v.get("summary_line", ""))
+                return batch_idx, batch
+            else:
+                print(f"  ⚠️ [Gemini] YouTube 요약 배열 길이 불일치 (batch {batch_idx}, attempt {attempt})")
+        except Exception as e:
+            print(f"  ⚠️ [Gemini] YouTube 요약 실패 (batch {batch_idx}, attempt {attempt}): {e}")
+            if attempt < 3:
+                wait = 15 if "429" in str(e) else 2
+                time.sleep(wait)
+    return batch_idx, batch
+
+
 def _summarize_youtube_videos(videos: list[dict]) -> list[dict]:
-    """Gemini로 YouTube 영상 제목+설명을 2줄 한국어 요약. 5개씩 배치 처리."""
+    """Gemini로 YouTube 영상 제목+설명을 2줄 한국어 요약. 배치 병렬 처리."""
+    from concurrent.futures import ThreadPoolExecutor
     if not videos or not GEMINI_API_KEY:
         return videos
 
     BATCH = 5
-    success_count = 0
-    for start in range(0, len(videos), BATCH):
-        batch = videos[start:start + BATCH]
-        n = len(batch)
-        input_lines = []
-        for i, v in enumerate(batch):
-            input_lines.append(f"[{i+1}] 제목: {v.get('title','')}\n    설명: {v.get('summary_line','')}")
-        input_text = "\n\n".join(input_lines)
+    batches = [videos[i:i + BATCH] for i in range(0, len(videos), BATCH)]
 
-        prompt = (
-            "너는 한국어 AI 뉴스 에디터다. 과장 없이 핵심만 전달한다.\n"
-            "아래 YouTube 영상들의 제목과 설명을 보고, 각 영상이 어떤 내용인지 한국어 2줄로 요약해줘.\n"
-            "반드시 JSON 배열만 출력하고, 다른 텍스트는 절대 포함하지 않는다.\n"
-            f"출력 형식: [{{'summary':'2줄 한국어 요약'}}] (총 {n}개, 입력 순서 동일)\n\n"
-            f"{input_text}"
-        )
+    with ThreadPoolExecutor(max_workers=len(batches)) as pool:
+        futures = [pool.submit(_summarize_youtube_batch, batch, idx) for idx, batch in enumerate(batches)]
+        for f in futures:
+            f.result()
 
-        for attempt in range(1, 4):
-            try:
-                r = requests.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}",
-                    headers={"Content-Type": "application/json"},
-                    json={
-                        "contents": [{"parts": [{"text": prompt}]}],
-                        "generationConfig": {"temperature": 0.2, "maxOutputTokens": 2000},
-                    },
-                    timeout=60,
-                )
-                r.raise_for_status()
-                data = r.json()
-                parts = data.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-                raw = "\n".join(p.get("text", "") for p in parts).strip()
-                cleaned = _extract_json_text(raw)
-                parsed = json.loads(cleaned)
-                if isinstance(parsed, list) and len(parsed) == n:
-                    for i, v in enumerate(batch):
-                        v["summary_line"] = parsed[i].get("summary", v.get("summary_line", ""))
-                    success_count += n
-                    break
-                else:
-                    print(f"  ⚠️ [Gemini] YouTube 요약 배열 길이 불일치 (attempt {attempt})")
-            except Exception as e:
-                print(f"  ⚠️ [Gemini] YouTube 요약 실패 (attempt {attempt}): {e}")
-                if attempt < 3:
-                    wait = 15 if "429" in str(e) else 2
-                    time.sleep(wait)
-        time.sleep(1)
-
+    success_count = sum(1 for v in videos if v.get("summary_line"))
     print(f"  🎬 [Gemini] YouTube 영상 요약 완료 ({success_count}/{len(videos)}개)")
     return videos
 
