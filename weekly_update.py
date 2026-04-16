@@ -1201,16 +1201,26 @@ def notion_replace_this_week_section(briefing: dict) -> bool:
             for k in list(blk.keys()):
                 if k not in ("object", "type", "paragraph", "heading_3", "callout", "divider"):
                     blk.pop(k, None)
-        body = {"children": new_blocks, "after": target_h2_id}
-        r = requests.patch(
-            f"https://api.notion.com/v1/blocks/{NOTION_MAIN_PAGE_ID}/children",
-            headers=_notion_headers(),
-            json=body,
-            timeout=30,
-        )
-        _notion_sleep()
-        r.raise_for_status()
-        print("  📝 [Notion] 메인 페이지 'This Week in AI' 섹션 업데이트 완료")
+
+        # Notion API 최대 100블록 제한 → 배치로 나눠서 추가
+        BATCH_SIZE = 95
+        after_id = target_h2_id
+        for batch_start in range(0, len(new_blocks), BATCH_SIZE):
+            batch = new_blocks[batch_start:batch_start + BATCH_SIZE]
+            body = {"children": batch, "after": after_id}
+            r = requests.patch(
+                f"https://api.notion.com/v1/blocks/{NOTION_MAIN_PAGE_ID}/children",
+                headers=_notion_headers(),
+                json=body,
+                timeout=30,
+            )
+            _notion_sleep()
+            r.raise_for_status()
+            # 다음 배치는 이번 배치 마지막 블록 뒤에 추가
+            results = r.json().get("results", [])
+            if results:
+                after_id = results[-1].get("id", after_id)
+        print(f"  📝 [Notion] 메인 페이지 'This Week in AI' 섹션 업데이트 완료 ({len(new_blocks)}블록)")
         return True
     except requests.RequestException as e:
         print(f"  📝 [Notion] 메인 페이지 업데이트 실패: {e}")
