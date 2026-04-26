@@ -192,19 +192,72 @@ def _fetch_single_rss(name: str, url: str, cutoff: datetime) -> list[dict]:
     return articles
 
 
+NEWS_CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "news_cache.json")
+
+
+def _load_news_cache() -> list[dict]:
+    """일주일치 뉴스 캐시 로드. 7일 지난 항목은 자동 제거."""
+    if not os.path.exists(NEWS_CACHE_FILE):
+        return []
+    try:
+        with open(NEWS_CACHE_FILE, "r", encoding="utf-8") as f:
+            cached = json.load(f)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=DAYS_BACK)
+        fresh = []
+        for a in cached:
+            try:
+                cached_at = datetime.fromisoformat(a.get("cached_at", ""))
+                if cached_at.tzinfo is None:
+                    cached_at = cached_at.replace(tzinfo=timezone.utc)
+                if cached_at >= cutoff:
+                    fresh.append(a)
+            except Exception:
+                continue
+        return fresh
+    except Exception as e:
+        print(f"  ⚠️ [캐시] 로드 실패: {e}")
+        return []
+
+
+def _save_news_cache(articles: list[dict]) -> None:
+    try:
+        with open(NEWS_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(articles, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"  ⚠️ [캐시] 저장 실패: {e}")
+
+
 def fetch_news() -> list[dict]:
-    """RSS에서 최근 7일 기사 수집. 모든 소스 병렬 처리."""
+    """RSS 신규 기사 수집 + 일주일치 캐시 누적. 중복 제거(링크 기준)."""
     from concurrent.futures import ThreadPoolExecutor
     cutoff = (datetime.now(timezone.utc) - timedelta(days=DAYS_BACK)).replace(tzinfo=None)
 
     with ThreadPoolExecutor(max_workers=len(RSS_SOURCES)) as pool:
         futures = [pool.submit(_fetch_single_rss, name, url, cutoff) for name, url in RSS_SOURCES]
-        all_articles = []
+        new_articles = []
         for f in futures:
-            all_articles.extend(f.result())
+            new_articles.extend(f.result())
 
-    print(f"  📡 총 수집(필터 후): {len(all_articles)}건")
-    return all_articles
+    # 캐시 로드 (지난 7일 누적분) + 신규 기사 병합 (링크 기준 중복 제거)
+    cached = _load_news_cache()
+    seen_links = set()
+    merged = []
+    now_iso = datetime.now(timezone.utc).isoformat()
+    for a in new_articles:
+        if a["link"] in seen_links:
+            continue
+        seen_links.add(a["link"])
+        a.setdefault("cached_at", now_iso)
+        merged.append(a)
+    for a in cached:
+        if a.get("link") in seen_links:
+            continue
+        seen_links.add(a.get("link"))
+        merged.append(a)
+
+    _save_news_cache(merged)
+    print(f"  📡 신규 {len(new_articles)}건 + 캐시 {len(cached)}건 → 총 {len(merged)}건")
+    return merged
 
 
 # ---------------------------------------------------------------------------

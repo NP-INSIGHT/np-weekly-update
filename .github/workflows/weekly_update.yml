@@ -2,14 +2,16 @@ name: NP AI Weekly Update
 
 on:
   schedule:
-    # 매주 월요일 오전 8시 KST = 일요일 23:00 UTC
-    - cron: '0 23 * * 0'
+    # 매일 오전 8시 KST = 23:00 UTC. 평일은 캐시만, 월요일에 Notion 업데이트
+    - cron: '0 23 * * *'
   workflow_dispatch: # 수동 실행도 가능
 
 jobs:
   update:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -28,7 +30,18 @@ jobs:
       - name: Install yt-dlp
         run: pip install yt-dlp
 
-      - name: Run weekly update
+      - name: Determine mode (Monday = full update, other days = cache only)
+        id: mode
+        run: |
+          DOW=$(TZ=Asia/Seoul date +%u)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "$DOW" = "1" ]; then
+            echo "mode=full" >> $GITHUB_OUTPUT
+          else
+            echo "mode=cache" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Run weekly update (full)
+        if: steps.mode.outputs.mode == 'full'
         env:
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_MAIN_PAGE_ID: ${{ secrets.NOTION_MAIN_PAGE_ID }}
@@ -39,3 +52,17 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         run: python weekly_update.py
+
+      - name: Cache news only (non-Monday)
+        if: steps.mode.outputs.mode == 'cache'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python -c "from weekly_update import fetch_news; fetch_news()"
+
+      - name: Commit news cache
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add news_cache.json || true
+          git diff --staged --quiet || git commit -m "chore: update news cache [skip ci]"
+          git push || true
