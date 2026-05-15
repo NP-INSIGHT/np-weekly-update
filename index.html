@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NP AI Hub 주간 업데이트</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Pretendard', sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .card {
+    background: white;
+    border-radius: 20px;
+    padding: 40px;
+    max-width: 480px;
+    width: 100%;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+  }
+  h1 { color: #333; margin-bottom: 8px; font-size: 24px; }
+  .subtitle { color: #666; margin-bottom: 30px; font-size: 14px; }
+  button {
+    width: 100%;
+    padding: 16px;
+    border: none;
+    border-radius: 12px;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.1s, opacity 0.2s;
+  }
+  button:hover { transform: translateY(-2px); }
+  button:active { transform: translateY(0); }
+  button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+  .status {
+    margin-top: 20px;
+    padding: 16px;
+    border-radius: 12px;
+    background: #f5f5f7;
+    color: #333;
+    font-size: 14px;
+    line-height: 1.6;
+    display: none;
+  }
+  .status.show { display: block; }
+  .status.success { background: #d1fae5; color: #065f46; }
+  .status.error { background: #fee2e2; color: #991b1b; }
+  .links {
+    margin-top: 24px;
+    padding-top: 20px;
+    border-top: 1px solid #eee;
+    text-align: center;
+  }
+  .links a {
+    color: #667eea;
+    text-decoration: none;
+    font-size: 13px;
+    margin: 0 8px;
+  }
+  .token-section {
+    background: #fff8e1;
+    padding: 16px;
+    border-radius: 12px;
+    margin-bottom: 20px;
+    font-size: 13px;
+    color: #6b5300;
+  }
+  .token-section input {
+    width: 100%;
+    padding: 10px;
+    margin-top: 8px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 13px;
+  }
+  .token-section button.save {
+    margin-top: 8px;
+    padding: 8px 16px;
+    background: #6b5300;
+    width: auto;
+    font-size: 13px;
+  }
+  .spinner {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border: 2px solid #fff;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>🤖 NP AI Hub 업데이트</h1>
+  <p class="subtitle">버튼 한 번으로 이번 주 AI 뉴스 + YouTube 영상을 Notion에 정리합니다</p>
+
+  <div id="tokenSection" class="token-section" style="display:none;">
+    <strong>⚠️ 첫 사용: GitHub 토큰 등록</strong><br>
+    <a href="https://github.com/settings/tokens/new?scopes=repo,workflow&description=NP-AI-Hub-Web" target="_blank" style="color:#6b5300; text-decoration:underline;">여기서 토큰 생성</a> (NP-INSIGHT 계정 로그인 상태에서)
+    <input type="password" id="tokenInput" placeholder="ghp_...">
+    <button class="save" onclick="saveToken()">저장</button>
+  </div>
+
+  <button id="runBtn" onclick="runUpdate()">🚀 지금 업데이트 실행</button>
+
+  <div id="status" class="status"></div>
+
+  <div class="links">
+    <a href="https://www.notion.so/npinvestment/NP-AI-31a0f0d18c5a806687ade7e082a3ece4" target="_blank">📋 Notion 페이지 보기</a>
+    <a href="https://github.com/NP-INSIGHT/np-weekly-update/actions" target="_blank">⚙️ 실행 기록</a>
+  </div>
+</div>
+
+<script>
+const REPO = "NP-INSIGHT/np-weekly-update";
+const WORKFLOW = "weekly_update.yml";
+
+function getToken() {
+  return localStorage.getItem("github_token") || "";
+}
+
+function saveToken() {
+  const t = document.getElementById("tokenInput").value.trim();
+  if (!t.startsWith("ghp_") && !t.startsWith("github_pat_")) {
+    alert("올바른 GitHub 토큰 형식이 아닙니다 (ghp_ 또는 github_pat_ 시작)");
+    return;
+  }
+  localStorage.setItem("github_token", t);
+  document.getElementById("tokenSection").style.display = "none";
+  showStatus("✓ 토큰 저장됨. 이제 업데이트를 실행할 수 있습니다.", "success");
+}
+
+function showStatus(msg, type = "") {
+  const el = document.getElementById("status");
+  el.className = "status show " + type;
+  el.innerHTML = msg;
+}
+
+async function runUpdate() {
+  const token = getToken();
+  if (!token) {
+    document.getElementById("tokenSection").style.display = "block";
+    showStatus("먼저 GitHub 토큰을 등록해 주세요.", "error");
+    return;
+  }
+
+  const btn = document.getElementById("runBtn");
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>실행 중...';
+  showStatus("GitHub Actions 트리거 중...");
+
+  try {
+    const r = await fetch(`https://api.github.com/repos/${REPO}/actions/workflows/${WORKFLOW}/dispatches`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      body: JSON.stringify({ ref: "master" }),
+    });
+
+    if (r.status === 204) {
+      showStatus(
+        "✓ 업데이트 시작됨!<br><br>약 3분 후 <a href='https://www.notion.so/npinvestment/NP-AI-31a0f0d18c5a806687ade7e082a3ece4' target='_blank' style='color:#065f46; text-decoration:underline;'>Notion 페이지</a>에서 확인하세요.",
+        "success"
+      );
+      pollStatus();
+    } else if (r.status === 401) {
+      showStatus("❌ 토큰이 유효하지 않습니다. 다시 등록해 주세요.", "error");
+      localStorage.removeItem("github_token");
+      document.getElementById("tokenSection").style.display = "block";
+    } else {
+      const err = await r.text();
+      showStatus(`❌ 실행 실패 (${r.status}): ${err}`, "error");
+    }
+  } catch (e) {
+    showStatus(`❌ 오류: ${e.message}`, "error");
+  } finally {
+    setTimeout(() => {
+      btn.disabled = false;
+      btn.innerHTML = "🚀 지금 업데이트 실행";
+    }, 3000);
+  }
+}
+
+async function pollStatus() {
+  const token = getToken();
+  await new Promise(r => setTimeout(r, 5000));
+
+  for (let i = 0; i < 60; i++) {
+    try {
+      const r = await fetch(`https://api.github.com/repos/${REPO}/actions/runs?per_page=1`, {
+        headers: { "Authorization": `Bearer ${token}`, "Accept": "application/vnd.github+json" },
+      });
+      const data = await r.json();
+      const run = data.workflow_runs?.[0];
+      if (!run) break;
+
+      if (run.status === "completed") {
+        if (run.conclusion === "success") {
+          showStatus(
+            `✓ 완료! (${Math.round((new Date(run.updated_at) - new Date(run.created_at))/1000)}초)<br><br><a href='https://www.notion.so/npinvestment/NP-AI-31a0f0d18c5a806687ade7e082a3ece4' target='_blank' style='color:#065f46; text-decoration:underline; font-weight:600;'>📋 Notion 페이지 새로고침</a>`,
+            "success"
+          );
+        } else {
+          showStatus(`❌ 실행 실패: ${run.conclusion}`, "error");
+        }
+        break;
+      } else {
+        showStatus(`⏳ 실행 중... (${run.status}) — 약 3분 소요`);
+      }
+    } catch (e) {}
+    await new Promise(r => setTimeout(r, 5000));
+  }
+}
+
+// 페이지 로드 시 토큰 없으면 입력 영역 표시
+if (!getToken()) {
+  document.getElementById("tokenSection").style.display = "block";
+}
+</script>
+</body>
+</html>
