@@ -228,8 +228,22 @@ async function pollStatus() {
   }
 }
 
-// 페이지 로드 시 토큰 없으면 입력 영역 표시
-if (!getToken()) {
+// URL fragment에 토큰이 있으면 자동 저장 (#token=ghxxx)
+function autoLoadToken() {
+  const hash = window.location.hash;
+  if (hash.startsWith("#token=")) {
+    const t = hash.substring(7);
+    if (t.startsWith("gh")) {
+      localStorage.setItem("github_token", t);
+      history.replaceState(null, "", window.location.pathname);
+      showStatus("✓ 토큰 자동 등록됨. 이제 업데이트 버튼을 누르세요.", "success");
+      return true;
+    }
+  }
+  return false;
+}
+
+if (!autoLoadToken() && !getToken()) {
   document.getElementById("tokenSection").style.display = "block";
 }
 </script>
